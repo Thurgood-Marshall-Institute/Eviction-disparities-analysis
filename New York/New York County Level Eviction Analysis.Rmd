@@ -1,0 +1,94 @@
+---
+title: "New York county analysis"
+author: "Sandhya Kajeepeta"
+date: "2024-07-17"
+output: html_document
+---
+
+```{r load packages,echo=FALSE, results=FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(ggplot2)
+library(sf)
+library(readxl)
+library(MASS)
+library(pscl)
+```
+
+
+```{r load data, echo=FALSE}
+df2 <- read_xlsx("./County eviction data.xlsx")
+#create variables of interest
+df2$res_evic_rate <- df2$`Residential Evictions`/df2$`Total Renter-occupied housing units`*100
+df2$res_holdover_evic_rate <- df2$`Residential Holdover Evictions`/df2$`Total Renter-occupied housing units`*100
+
+#rename vars
+df2$res_evics <- df2$`Residential Evictions`
+df2$res_holdover_evics <- df2$`Residential Holdover Evictions`
+df2$rental_units <- df2$`Total Renter-occupied housing units`
+
+df2$perc_black_rent <- df2$`Black Renter-occupied housing units`/df2$`Total Renter-occupied housing units`*10
+```
+
+```{r plot vars, echo=FALSE, results=FALSE, warning=FALSE, fig.show='hide'}
+plot <-ggplot(df2, mapping=aes(x=perc_black_rent, y=res_holdover_evic_rate)) + geom_point()
+plot
+
+plot <-ggplot(df2, mapping=aes(x=perc_black_rent, y=res_holdover_evics/res_evics)) + geom_point()
+plot
+
+hist(df2$res_evic_rate)
+hist(df2$perc_black_rent)
+```
+
+```{r calc perc holdover, echo=FALSE, warning=FALSE}
+perc_h <- df2 %>% dplyr::select(res_holdover_evics, res_evics) %>% summarise_all(sum, na.rm=T)
+perc_h$res_holdover_evics/perc_h$res_evics
+```
+Nearly 20% of all residential evictions in New York State in 2022 were holdover evictions.
+
+
+```{r poisson or neg binomial, echo=FALSE, results=FALSE, fig.show='hide'}
+p_model <- glm(formula=res_evics~perc_black_rent + offset(log(rental_units)), data=df2, family="poisson")
+nb_model <- glm.nb(formula=res_evics~perc_black_rent + offset(log(rental_units)), data=df2)
+
+#Residual plot for Poisson regression
+p_res <- resid(p_model)
+plot(fitted(p_model), p_res, col='steelblue', pch=16,
+     xlab='Predicted Offers', ylab='Standardized Residuals', main='Poisson')
+abline(0,0)
+
+#Residual plot for negative binomial regression 
+nb_res <- resid(nb_model)
+plot(fitted(nb_model), nb_res, col='steelblue', pch=16,
+     xlab='Predicted Offers', ylab='Standardized Residuals', main='Negative Binomial')
+abline(0,0)
+
+#Residuals for negative binomial plot are much smaller, Poisson residuals extend all the way to 60 - suggests that negative binomial is a better fit than Poisson
+
+pchisq(2 * (logLik(nb_model) - logLik(p_model)), df = 1, lower.tail = FALSE)
+
+#Negative binomial offers significantly better fit
+```
+
+```{r analysis, echo=FALSE, warning=FALSE, message=FALSE}
+m <- glm.nb(formula=res_evics~perc_black_rent + offset(log(rental_units)), data=df2)
+print("Residential eviction filing rate")
+est <- exp(cbind(Estimate = coef(m), confint(m)))
+kable(est, "pipe")
+
+m <- glm.nb(formula=res_holdover_evics~perc_black_rent + offset(log(rental_units)), data=df2)
+print("Residential holdover eviction filing rate")
+est <- exp(cbind(Estimate = coef(m), confint(m)))
+kable(est, "pipe")
+
+```
+
+New York counties with a higher percentage of Black renters face a higher rate of total residential eviction filings and residential holdover eviction filings.
+
+A 10-percentage-point increase in the percent of Black renters in a county is associated with a 55% increase in the rate of total residential eviction filings.
+
+A 10-percentage-point increase in the percent of Black renters in a county is associated with a 33% increase in the rate of residential holdover eviction filings.
+
+*Sources: https://app.powerbigov.us/view?r=eyJrIjoiZGE3NzljYmItYTBmZC00OGI2LTliYTgtYzY5ZjI0N2U0MWYxIiwidCI6IjM0NTZmZTkyLWNiZDEtNDA2ZC1iNWEzLTUzNjRiZWMwYTgzMyJ9 (2022); https://data.census.gov/table/ACSST5Y2021.S2502?q=S2502&g=040XX00US36,36$0500000&tp=true (2021)*
